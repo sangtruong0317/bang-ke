@@ -10,6 +10,11 @@ WORKDIR /var/www/html
 
 COPY . .
 
+RUN echo "memory_limit=512M" > /usr/local/etc/php/conf.d/memory.ini \
+    && echo "upload_max_filesize=50M" >> /usr/local/etc/php/conf.d/memory.ini \
+    && echo "post_max_size=50M" >> /usr/local/etc/php/conf.d/memory.ini \
+    && echo "max_execution_time=300" >> /usr/local/etc/php/conf.d/memory.ini
+
 RUN composer install --no-dev --optimize-autoloader
 
 RUN php artisan config:clear \
