@@ -22,36 +22,29 @@ class BangKeController extends Controller
      * Upload file Excel.
      */
     public function upload(Request $request)
-    {
-        $request->validate([
-            'excel' => [
-                'required',
-                'file',
-                'mimes:xlsx,xls',
-            ],
-        ]);
-        if (!is_dir(storage_path('app/excel'))) {
-        mkdir(storage_path('app/excel'), 0777, true);
-    }
-        $path = $request->file('excel')->store('excel');
+{
+    $request->validate([
+        'excel' => ['required', 'file', 'mimes:xlsx,xls'],
+    ]);
 
-        $fullPath = Storage::disk('local')->path($path);
+    $path = $request->file('excel')->store('excel');
 
-        $reader = app(ExcelReaderService::class);
+    $fullPath = Storage::disk('local')->path($path);
 
-        $orders = $reader->read($fullPath);
+    $reader = app(ExcelReaderService::class);
 
-        session([
-            'orders' => $orders,
-        ]);
+    $orders = $reader->read($fullPath);
 
-        $tree = $reader->truckTree($orders);
+    session()->forget(['orders', 'excel_path']);
 
-        return view(
-            'truck-list',
-            compact('tree')
-        );
-    }
+    session([
+        'excel_path' => $path,
+    ]);
+
+    $tree = $reader->truckTree($orders);
+
+    return view('truck-list', compact('tree'));
+}
 
     /**
      * Sinh bảng kê.
@@ -72,7 +65,17 @@ class BangKeController extends Controller
 
         }
 
-        $orders = session('orders', []);
+        $path = session('excel_path');
+
+if (!$path) {
+    return redirect('/')->with('error', 'Không tìm thấy dữ liệu Excel.');
+}
+
+$fullPath = Storage::disk('local')->path($path);
+
+$reader = app(ExcelReaderService::class);
+
+$orders = $reader->read($fullPath);
         
 
         if (empty($orders)) {
