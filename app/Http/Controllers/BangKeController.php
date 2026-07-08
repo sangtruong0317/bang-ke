@@ -30,7 +30,9 @@ class BangKeController extends Controller
                 'mimes:xlsx,xls',
             ],
         ]);
-
+        if (!is_dir(storage_path('app/excel'))) {
+        mkdir(storage_path('app/excel'), 0777, true);
+    }
         $path = $request->file('excel')->store('excel');
 
         $fullPath = Storage::disk('local')->path($path);
