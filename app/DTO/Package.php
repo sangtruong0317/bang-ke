@@ -13,6 +13,11 @@ final readonly class Package
 
     public function displayName(): string
     {
-        return "{$this->product} = {$this->quantity}";
+        // CHILL đã tạo sẵn chuỗi hoàn chỉnh
+    if ($this->quantity === 0) {
+        return trim($this->product);
+    }
+
+    return trim($this->product) . ' = ' . $this->quantity;
     }
 }

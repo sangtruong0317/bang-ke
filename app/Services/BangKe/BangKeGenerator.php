@@ -2,13 +2,17 @@
 
 namespace App\Services\BangKe;
 
-use App\DTO\Customer;
 use App\DTO\Order;
-use App\DTO\Package;
 use App\DTO\Truck;
 
 final class BangKeGenerator
 {
+    public function __construct(
+        private readonly NormalPackageBuilder $normalBuilder,
+        private readonly ChillPackageBuilder $chillBuilder,
+    ) {
+    }
+
     /**
      * @param Order[] $orders
      * @param string[] $selectedKeys
@@ -18,24 +22,64 @@ final class BangKeGenerator
         array $orders,
         array $selectedKeys
     ): array {
+        $orders = $this->filter($orders, $selectedKeys);
 
-        $orders = $this->filter(
-            $orders,
-            $selectedKeys
-        );
+        $normalOrders = [];
+        $specialGroups = [];
 
-        $orders = $this->merge(
-            $orders
-        );
+        foreach ($orders as $order) {
+            $warehouse = mb_strtoupper(
+                trim($order->warehouse),
+                'UTF-8'
+            );
 
-        return $this->sort(
-    $this->build($orders)
-);
+            if ($warehouse === 'CHILL') {
+                $key = $order->truck . '|' . $order->customer;
+
+                $specialGroups[$key]['truck'] = $order->truck;
+                $specialGroups[$key]['customer'] = $order->customer;
+                $specialGroups[$key]['orders'][] = $order;
+
+                continue;
+            }
+
+            $normalOrders[] = $order;
+        }
+
+        $normalOrders = $this->mergeNormalOrders($normalOrders);
+
+        $trucks = [];
+
+        foreach ($normalOrders as $order) {
+            $truck = $this->getTruck($trucks, $order->truck);
+            $customer = $truck->customer($order->customer);
+
+            foreach ($this->normalBuilder->build($order) as $package) {
+                $customer->addPackage($package);
+            }
+        }
+
+        foreach ($specialGroups as $group) {
+            $truck = $this->getTruck(
+                $trucks,
+                $group['truck']
+            );
+
+            $customer = $truck->customer(
+                $group['customer']
+            );
+
+            foreach ($this->chillBuilder->build(
+                $group['orders']
+            ) as $package) {
+                $customer->addPackage($package);
+            }
+        }
+
+        return $this->sort(array_values($trucks));
     }
 
     /**
-     * Lọc theo xe + kho được chọn.
-     *
      * @param Order[] $orders
      * @param string[] $selectedKeys
      * @return Order[]
@@ -44,188 +88,80 @@ final class BangKeGenerator
         array $orders,
         array $selectedKeys
     ): array {
-
-        return array_values(
-
-            array_filter(
-
-                $orders,
-
-                fn (Order $order) => in_array(
-                    $order->key(),
-                    $selectedKeys,
-                    true
-                )
-
+        return array_values(array_filter(
+            $orders,
+            fn (Order $order): bool => in_array(
+                $order->key(),
+                $selectedKeys,
+                true
             )
-
-        );
-
+        ));
     }
 
     /**
-     * Gộp các dòng cùng:
-     *
-     * - Xe
-     * - Khách hàng
-     * - Sản phẩm
-     * - Quy cách
-     *
-     * Sau khi filter thì KHO không còn ý nghĩa nữa.
-     *
      * @param Order[] $orders
      * @return Order[]
      */
-    private function merge(array $orders): array
+    private function mergeNormalOrders(array $orders): array
     {
         $groups = [];
 
         foreach ($orders as $order) {
-
             $key = implode('|', [
-
                 $order->truck,
                 $order->customer,
                 $order->product,
                 $order->packageSize,
-
             ]);
 
             if (! isset($groups[$key])) {
-
                 $groups[$key] = [
-
-                    'truck'       => $order->truck,
-                    'warehouse'   => '',
-                    'status'      => $order->status,
-                    'customer'    => $order->customer,
-                    'product'     => $order->product,
-                    'quantity'    => 0,
+                    'truck' => $order->truck,
+                    'status' => $order->status,
+                    'customer' => $order->customer,
+                    'product' => $order->product,
+                    'quantity' => 0,
                     'packageSize' => $order->packageSize,
-
                 ];
-
             }
 
             $groups[$key]['quantity'] += $order->quantity;
-
         }
 
         $result = [];
 
-        foreach ($groups as $row) {
-
+        foreach ($groups as $group) {
             $result[] = new Order(
-
-                truck: $row['truck'],
+                truck: $group['truck'],
                 warehouse: '',
-                status: $row['status'],
-                customer: $row['customer'],
-                product: $row['product'],
-                quantity: $row['quantity'],
-                packageSize: $row['packageSize'],
-
+                status: $group['status'],
+                customer: $group['customer'],
+                product: $group['product'],
+                quantity: $group['quantity'],
+                packageSize: $group['packageSize'],
             );
-
         }
 
         return $result;
     }
-        /**
-     * Xây dựng cây dữ liệu Truck -> Customer -> Package
-     *
-     * @param Order[] $orders
-     * @return Truck[]
+
+    /**
+     * @param array<string, Truck> $trucks
      */
-    private function build(array $orders): array
-    {
-        /**
-         * @var array<string, Truck> $trucks
-         */
-        $trucks = [];
-
-        foreach ($orders as $order) {
-
-            if (! isset($trucks[$order->truck])) {
-
-                $trucks[$order->truck] = new Truck(
-                    plateNumber: $order->truck
-                );
-
-            }
-
-            $truck = $trucks[$order->truck];
-
-            $customer = $truck->customer(
-                $order->customer
+    private function getTruck(
+        array &$trucks,
+        string $plateNumber
+    ): Truck {
+        if (! isset($trucks[$plateNumber])) {
+            $trucks[$plateNumber] = new Truck(
+                plateNumber: $plateNumber
             );
-
-            foreach ($this->packages($order) as $package) {
-
-                $customer->addPackage($package);
-
-            }
-
         }
 
-        return array_values($trucks);
+        return $trucks[$plateNumber];
     }
 
     /**
-     * Chia một Order thành nhiều Package.
-     *
-     * Ví dụ:
-     *
-     * 110 / 20
-     *
-     * =>
-     *
-     * 20
-     * 20
-     * 20
-     * 20
-     * 20
-     * 10
-     *
-     * @return Package[]
-     */
-    private function packages(Order $order): array
-    {
-        $packages = [];
-
-        if ($order->packageSize <= 0) {
-            return [];
-        }
-
-        $full = $order->fullPackages();
-
-        for ($i = 0; $i < $full; $i++) {
-
-            $packages[] = new Package(
-    product: $order->product,
-    quantity: $order->packageSize,
-    isRemain: false,
-);
-
-        }
-
-        $remain = $order->remain();
-
-        if ($remain > 0) {
-
-            $packages[] = new Package(
-    product: $order->product,
-    quantity: $remain,
-    isRemain: true,
-);
-
-        }
-
-        return $packages;
-    }
-        /**
-     * Sắp xếp dữ liệu trước khi trả về.
-     *
      * @param Truck[] $trucks
      * @return Truck[]
      */
@@ -235,14 +171,15 @@ final class BangKeGenerator
             $truck->sortCustomers();
         }
 
-        uasort(
+        usort(
             $trucks,
-            fn (Truck $a, Truck $b) => strnatcasecmp(
-                $a->plateNumber,
-                $b->plateNumber
-            )
+            fn (Truck $left, Truck $right): int =>
+                strnatcasecmp(
+                    $left->plateNumber,
+                    $right->plateNumber
+                )
         );
 
-        return array_values($trucks);
+        return $trucks;
     }
 }
